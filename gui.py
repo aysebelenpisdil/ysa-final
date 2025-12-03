@@ -6,14 +6,91 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 import pandas as pd
 import numpy as np
-from sklearn.neural_network import MLPClassifier
 from sklearn.preprocessing import StandardScaler, LabelEncoder
-from sklearn.model_selection import cross_val_score, cross_val_predict, train_test_split
-from sklearn.metrics import accuracy_score, confusion_matrix
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import confusion_matrix
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import warnings
 warnings.filterwarnings('ignore')
+
+
+class YapaySinirAgi:
+    """Yapay Sinir Agi Implementasyonu"""
+
+    def __init__(self, katman_boyutlari, ogrenme_orani=0.1, iterasyon=100, random_state=42):
+        self.katman_boyutlari = katman_boyutlari
+        self.ogrenme_orani = ogrenme_orani
+        self.iterasyon = iterasyon
+        self.random_state = random_state
+        self.agirliklar = []
+        self.biaslar = []
+        self.loss_gecmisi = []
+
+    def sigmoid(self, x):
+        x = np.clip(x, -500, 500)
+        return 1 / (1 + np.exp(-x))
+
+    def sigmoid_turev(self, x):
+        return x * (1 - x)
+
+    def mse_loss(self, y_gercek, y_tahmin):
+        return np.mean((y_gercek - y_tahmin) ** 2)
+
+    def agirlik_baslat(self):
+        np.random.seed(self.random_state)
+        self.agirliklar = []
+        self.biaslar = []
+
+        for i in range(len(self.katman_boyutlari) - 1):
+            w = np.random.randn(self.katman_boyutlari[i], self.katman_boyutlari[i+1]) * 0.5
+            b = np.zeros((1, self.katman_boyutlari[i+1]))
+            self.agirliklar.append(w)
+            self.biaslar.append(b)
+
+    def ileri_yayilim(self, X):
+        self.aktivasyonlar = [X]
+
+        for i in range(len(self.agirliklar)):
+            z = np.dot(self.aktivasyonlar[-1], self.agirliklar[i]) + self.biaslar[i]
+            a = self.sigmoid(z)
+            self.aktivasyonlar.append(a)
+
+        return self.aktivasyonlar[-1]
+
+    def geri_yayilim(self, X, y):
+        m = X.shape[0]
+
+        hata = self.aktivasyonlar[-1] - y
+        deltalar = [hata * self.sigmoid_turev(self.aktivasyonlar[-1])]
+
+        for i in range(len(self.agirliklar) - 1, 0, -1):
+            hata = deltalar[0].dot(self.agirliklar[i].T)
+            delta = hata * self.sigmoid_turev(self.aktivasyonlar[i])
+            deltalar.insert(0, delta)
+
+        for i in range(len(self.agirliklar)):
+            self.agirliklar[i] -= self.ogrenme_orani * self.aktivasyonlar[i].T.dot(deltalar[i]) / m
+            self.biaslar[i] -= self.ogrenme_orani * np.sum(deltalar[i], axis=0, keepdims=True) / m
+
+    def egit(self, X, y, verbose=False):
+        if y.ndim == 1:
+            y = y.reshape(-1, 1)
+
+        self.agirlik_baslat()
+        self.loss_gecmisi = []
+
+        for epoch in range(self.iterasyon):
+            y_tahmin = self.ileri_yayilim(X)
+            loss = self.mse_loss(y, y_tahmin)
+            self.loss_gecmisi.append(loss)
+            self.geri_yayilim(X, y)
+
+        return self
+
+    def tahmin(self, X):
+        olasilik = self.ileri_yayilim(X)
+        return (olasilik >= 0.5).astype(int).flatten()
 
 
 class SmokingClassifierGUI:
@@ -28,13 +105,13 @@ class SmokingClassifierGUI:
         self.y = None
         self.X_scaled = None
         self.scaler = StandardScaler()
-        self.model = None
         self.data_loaded = False
 
         # Model parametreleri
-        self.hidden1 = tk.IntVar(value=128)
-        self.hidden2 = tk.IntVar(value=64)
-        self.max_iter = tk.IntVar(value=500)
+        self.hidden1 = tk.IntVar(value=64)
+        self.hidden2 = tk.IntVar(value=32)
+        self.ogrenme_orani = tk.DoubleVar(value=0.5)
+        self.iterasyon = tk.IntVar(value=100)
 
         self.create_widgets()
 
@@ -74,13 +151,17 @@ class SmokingClassifierGUI:
         ttk.Label(param_frame, text="Gizli Katman 2:").grid(row=1, column=0, sticky=tk.W, pady=2)
         ttk.Entry(param_frame, textvariable=self.hidden2, width=10).grid(row=1, column=1, pady=2)
 
-        # Max iterasyon
-        ttk.Label(param_frame, text="Max Iterasyon:").grid(row=2, column=0, sticky=tk.W, pady=2)
-        ttk.Entry(param_frame, textvariable=self.max_iter, width=10).grid(row=2, column=1, pady=2)
+        # Ogrenme orani
+        ttk.Label(param_frame, text="Ogrenme Orani:").grid(row=2, column=0, sticky=tk.W, pady=2)
+        ttk.Entry(param_frame, textvariable=self.ogrenme_orani, width=10).grid(row=2, column=1, pady=2)
+
+        # Iterasyon
+        ttk.Label(param_frame, text="Iterasyon:").grid(row=3, column=0, sticky=tk.W, pady=2)
+        ttk.Entry(param_frame, textvariable=self.iterasyon, width=10).grid(row=3, column=1, pady=2)
 
         # Topoloji gosterimi
-        self.topo_label = ttk.Label(param_frame, text="Topoloji: 25 -> 128 -> 64 -> 2", font=('Helvetica', 10, 'bold'))
-        self.topo_label.grid(row=3, column=0, columnspan=2, pady=10)
+        self.topo_label = ttk.Label(param_frame, text="Topoloji: 25 -> 64 -> 32 -> 1", font=('Helvetica', 10, 'bold'))
+        self.topo_label.grid(row=4, column=0, columnspan=2, pady=10)
 
         # Orta panel - Senaryo Secimi
         scenario_frame = ttk.LabelFrame(main_frame, text="Senaryo Secimi", padding="10")
@@ -128,19 +209,14 @@ class SmokingClassifierGUI:
 
     def load_data(self):
         try:
-            # Veri setini yukle
             df = pd.read_csv('data/smoking.csv')
-
-            # ID sutununu kaldir
             df = df.drop('ID', axis=1)
 
-            # Kategorik degiskenleri encode et
             le = LabelEncoder()
             categorical_cols = ['gender', 'oral', 'tartar']
             for col in categorical_cols:
                 df[col] = le.fit_transform(df[col])
 
-            # X ve y ayir
             self.X = df.drop('smoking', axis=1).values
             self.y = df['smoking'].values
             self.X_scaled = self.scaler.fit_transform(self.X)
@@ -149,7 +225,6 @@ class SmokingClassifierGUI:
             self.data_label.config(text=f"Yuklendi: {len(self.X):,} ornek, {self.X.shape[1]} ozellik",
                                   foreground='green')
 
-            # Sinif dagilimini goster
             class_counts = np.bincount(self.y)
             info = f"Sinif Dagilimi:\n"
             info += f"  Sigara Icmeyen (0): {class_counts[0]:,}\n"
@@ -167,19 +242,46 @@ class SmokingClassifierGUI:
             messagebox.showerror("Hata", f"Veri yuklenirken hata: {str(e)}")
 
     def create_model(self, random_state=42):
-        return MLPClassifier(
-            hidden_layer_sizes=(self.hidden1.get(), self.hidden2.get()),
-            activation='relu',
-            solver='adam',
-            max_iter=self.max_iter.get(),
-            random_state=random_state,
-            early_stopping=True,
-            validation_fraction=0.1
+        katman_boyutlari = [self.X.shape[1], self.hidden1.get(), self.hidden2.get(), 1]
+        return YapaySinirAgi(
+            katman_boyutlari=katman_boyutlari,
+            ogrenme_orani=self.ogrenme_orani.get(),
+            iterasyon=self.iterasyon.get(),
+            random_state=random_state
         )
+
+    def k_fold_cross_validation(self, X, y, k=5, random_state=42):
+        np.random.seed(random_state)
+        n_samples = len(y)
+        indices = np.arange(n_samples)
+        np.random.shuffle(indices)
+
+        fold_size = n_samples // k
+        scores = []
+        tum_tahminler = np.zeros(n_samples)
+
+        for fold in range(k):
+            test_start = fold * fold_size
+            test_end = test_start + fold_size if fold < k - 1 else n_samples
+            test_indices = indices[test_start:test_end]
+            train_indices = np.concatenate([indices[:test_start], indices[test_end:]])
+
+            X_train, X_test = X[train_indices], X[test_indices]
+            y_train, y_test = y[train_indices], y[test_indices]
+
+            model = self.create_model(random_state=random_state + fold)
+            model.egit(X_train, y_train, verbose=False)
+            y_pred = model.tahmin(X_test)
+
+            acc = np.mean(y_pred == y_test)
+            scores.append(acc)
+            tum_tahminler[test_indices] = y_pred
+
+        return np.array(scores), tum_tahminler.astype(int)
 
     def update_topology_label(self):
         if self.X is not None:
-            topo = f"Topoloji: {self.X.shape[1]} -> {self.hidden1.get()} -> {self.hidden2.get()} -> 2"
+            topo = f"Topoloji: {self.X.shape[1]} -> {self.hidden1.get()} -> {self.hidden2.get()} -> 1"
             self.topo_label.config(text=topo)
 
     def run_scenario(self):
@@ -191,7 +293,7 @@ class SmokingClassifierGUI:
         scenario = self.scenario_var.get()
 
         self.result_text.delete(1.0, tk.END)
-        self.result_text.insert(tk.END, "Model egitiliyor...\n(Bu islem biraz zaman alabilir)\n")
+        self.result_text.insert(tk.END, "Model egitiliyor...\n")
         self.root.update()
 
         try:
@@ -207,17 +309,16 @@ class SmokingClassifierGUI:
             messagebox.showerror("Hata", f"Model egitilirken hata: {str(e)}")
 
     def run_scenario1(self):
-        """Egitim = Test"""
         model = self.create_model()
-        model.fit(self.X_scaled, self.y)
-        y_pred = model.predict(self.X_scaled)
-        acc = accuracy_score(self.y, y_pred)
+        model.egit(self.X_scaled, self.y)
+        y_pred = model.tahmin(self.X_scaled)
+        acc = np.mean(y_pred == self.y)
 
         result = "SENARYO 1: Egitim = Test\n"
         result += "="*35 + "\n\n"
-        result += f"Ag Topolojisi: {self.X.shape[1]}->{self.hidden1.get()}->{self.hidden2.get()}->2\n"
-        result += f"Aktivasyon: ReLU\n"
-        result += f"Optimizer: Adam\n\n"
+        result += f"Ag Topolojisi: {self.X.shape[1]}->{self.hidden1.get()}->{self.hidden2.get()}->1\n"
+        result += f"Aktivasyon: Sigmoid\n"
+        result += f"Kayip: MSE\n\n"
         result += f"* Dogruluk: {acc*100:.2f}%\n"
 
         self.result_text.delete(1.0, tk.END)
@@ -226,14 +327,11 @@ class SmokingClassifierGUI:
         self.plot_confusion_matrix(self.y, y_pred, "Senaryo 1")
 
     def run_scenario2(self):
-        """5-Fold CV"""
-        model = self.create_model()
-        scores = cross_val_score(model, self.X_scaled, self.y, cv=5)
-        y_pred = cross_val_predict(model, self.X_scaled, self.y, cv=5)
+        scores, y_pred = self.k_fold_cross_validation(self.X_scaled, self.y, k=5)
 
         result = "SENARYO 2: 5-Fold Cross Validation\n"
         result += "="*35 + "\n\n"
-        result += f"Ag Topolojisi: {self.X.shape[1]}->{self.hidden1.get()}->{self.hidden2.get()}->2\n\n"
+        result += f"Ag Topolojisi: {self.X.shape[1]}->{self.hidden1.get()}->{self.hidden2.get()}->1\n\n"
         result += "Fold Sonuclari:\n"
         for i, score in enumerate(scores, 1):
             result += f"  Fold {i}: {score*100:.2f}%\n"
@@ -246,14 +344,11 @@ class SmokingClassifierGUI:
         self.plot_confusion_matrix(self.y, y_pred, "Senaryo 2 (5-Fold)")
 
     def run_scenario3(self):
-        """10-Fold CV"""
-        model = self.create_model()
-        scores = cross_val_score(model, self.X_scaled, self.y, cv=10)
-        y_pred = cross_val_predict(model, self.X_scaled, self.y, cv=10)
+        scores, y_pred = self.k_fold_cross_validation(self.X_scaled, self.y, k=10)
 
         result = "SENARYO 3: 10-Fold Cross Validation\n"
         result += "="*35 + "\n\n"
-        result += f"Ag Topolojisi: {self.X.shape[1]}->{self.hidden1.get()}->{self.hidden2.get()}->2\n\n"
+        result += f"Ag Topolojisi: {self.X.shape[1]}->{self.hidden1.get()}->{self.hidden2.get()}->1\n\n"
         result += "Fold Sonuclari:\n"
         for i, score in enumerate(scores, 1):
             result += f"  Fold {i:2d}: {score*100:.2f}%\n"
@@ -266,13 +361,12 @@ class SmokingClassifierGUI:
         self.plot_confusion_matrix(self.y, y_pred, "Senaryo 3 (10-Fold)")
 
     def run_scenario4(self):
-        """%75-25 Ayirma (5 seed)"""
         seeds = [42, 123, 456, 789, 999]
         results = []
 
         result = "SENARYO 4: %75-25 Ayirma (5 Seed)\n"
         result += "="*35 + "\n\n"
-        result += f"Ag Topolojisi: {self.X.shape[1]}->{self.hidden1.get()}->{self.hidden2.get()}->2\n\n"
+        result += f"Ag Topolojisi: {self.X.shape[1]}->{self.hidden1.get()}->{self.hidden2.get()}->1\n\n"
 
         best_acc = 0
         best_data = None
@@ -282,9 +376,9 @@ class SmokingClassifierGUI:
                 self.X_scaled, self.y, test_size=0.25, random_state=seed, stratify=self.y
             )
             model = self.create_model(random_state=seed)
-            model.fit(X_train, y_train)
-            y_pred = model.predict(X_test)
-            acc = accuracy_score(y_test, y_pred)
+            model.egit(X_train, y_train)
+            y_pred = model.tahmin(X_test)
+            acc = np.mean(y_pred == y_test)
             results.append(acc)
             result += f"  Seed {seed}: {acc*100:.2f}%\n"
 
@@ -303,7 +397,6 @@ class SmokingClassifierGUI:
         self.plot_confusion_matrix(best_data[0], best_data[1], "Senaryo 4 (En Iyi)")
 
     def plot_confusion_matrix(self, y_true, y_pred, title):
-        # Onceki grafigi temizle
         for widget in self.graph_frame.winfo_children():
             widget.destroy()
 
@@ -333,25 +426,23 @@ class SmokingClassifierGUI:
         plt.close(fig)
 
     def show_network(self):
-        """Ag yapisini gorsellestir"""
         if not self.data_loaded:
             messagebox.showwarning("Uyari", "Once veri setini yukleyin!")
             return
 
-        # Yeni pencere
         net_window = tk.Toplevel(self.root)
         net_window.title("Yapay Sinir Agi Mimarisi")
         net_window.geometry("700x500")
 
         fig, ax = plt.subplots(figsize=(8, 5))
 
-        layers = [self.X.shape[1], self.hidden1.get(), self.hidden2.get(), 2]
+        layers = [self.X.shape[1], self.hidden1.get(), self.hidden2.get(), 1]
         layer_names = [f'Giris\n({layers[0]})', f'Gizli 1\n({layers[1]})',
                       f'Gizli 2\n({layers[2]})', f'Cikis\n({layers[3]})']
         colors = ['#3498db', '#2ecc71', '#2ecc71', '#e74c3c']
 
         x_positions = [0.15, 0.4, 0.65, 0.9]
-        max_display = [8, 6, 6, 2]
+        max_display = [8, 6, 6, 1]
 
         node_positions = []
 
@@ -372,7 +463,6 @@ class SmokingClassifierGUI:
             ax.text(x, 0.08, name, fontsize=10, ha='center', va='center', fontweight='bold')
             node_positions.append(positions)
 
-        # Baglantilar
         for i in range(len(node_positions) - 1):
             for pos1 in node_positions[i]:
                 for pos2 in node_positions[i + 1]:
@@ -382,7 +472,7 @@ class SmokingClassifierGUI:
         ax.set_ylim(0, 1)
         ax.set_aspect('equal')
         ax.axis('off')
-        ax.set_title('Yapay Sinir Agi Mimarisi\nAktivasyon: ReLU | Optimizer: Adam', fontsize=12, fontweight='bold')
+        ax.set_title('Yapay Sinir Agi Mimarisi\nAktivasyon: Sigmoid | Kayip: MSE', fontsize=12, fontweight='bold')
 
         fig.tight_layout()
 
@@ -392,31 +482,28 @@ class SmokingClassifierGUI:
         plt.close(fig)
 
     def compare_all(self):
-        """Tum senaryolari karsilastir"""
         if not self.data_loaded:
             messagebox.showwarning("Uyari", "Once veri setini yukleyin!")
             return
 
         self.result_text.delete(1.0, tk.END)
-        self.result_text.insert(tk.END, "Tum senaryolar calistiriliyor...\n(Bu islem biraz zaman alabilir)\n")
+        self.result_text.insert(tk.END, "Tum senaryolar calistiriliyor...\n")
         self.root.update()
 
         results = {}
 
         # Senaryo 1
         model1 = self.create_model()
-        model1.fit(self.X_scaled, self.y)
-        y_pred1 = model1.predict(self.X_scaled)
-        results['Egitim=Test'] = accuracy_score(self.y, y_pred1)
+        model1.egit(self.X_scaled, self.y)
+        y_pred1 = model1.tahmin(self.X_scaled)
+        results['Egitim=Test'] = np.mean(y_pred1 == self.y)
 
         # Senaryo 2
-        model2 = self.create_model()
-        scores2 = cross_val_score(model2, self.X_scaled, self.y, cv=5)
+        scores2, _ = self.k_fold_cross_validation(self.X_scaled, self.y, k=5)
         results['5-Fold CV'] = scores2.mean()
 
         # Senaryo 3
-        model3 = self.create_model()
-        scores3 = cross_val_score(model3, self.X_scaled, self.y, cv=10)
+        scores3, _ = self.k_fold_cross_validation(self.X_scaled, self.y, k=10)
         results['10-Fold CV'] = scores3.mean()
 
         # Senaryo 4
@@ -427,8 +514,8 @@ class SmokingClassifierGUI:
                 self.X_scaled, self.y, test_size=0.25, random_state=seed, stratify=self.y
             )
             model4 = self.create_model(random_state=seed)
-            model4.fit(X_train, y_train)
-            accs.append(accuracy_score(y_test, model4.predict(X_test)))
+            model4.egit(X_train, y_train)
+            accs.append(np.mean(model4.tahmin(X_test) == y_test))
         results['%75-25'] = np.mean(accs)
 
         # Sonuclari goster
@@ -449,7 +536,7 @@ class SmokingClassifierGUI:
         bars = ax.bar(results.keys(), [v*100 for v in results.values()], color=colors)
         ax.set_ylabel('Dogruluk (%)')
         ax.set_title('Senaryo Karsilastirmasi')
-        ax.set_ylim(70, 90)
+        ax.set_ylim(50, 85)
 
         for bar, acc in zip(bars, results.values()):
             ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.3,
